@@ -4,13 +4,27 @@ from langchain_text_splitters import (
     CharacterTextSplitter,
     RecursiveCharacterTextSplitter,
     Language,
-    TextSplitter, # 基类
-    SemanticChunker
+    TextSplitter # 基类
 )
-from langchain_experimental.text_splitter import SemanticChunker
-from langchain_openai import OpenAIEmbeddings # SemanticChunker的示例
-# 注意：SemanticChunker可能在langchain_experimental或直接在langchain_text_splitters中
-# 取决于LangChain的版本。
+
+# 标记SemanticChunker是否可用
+HAS_SEMANTIC_CHUNKER = False
+try:
+    # 尝试导入SemanticChunker
+    from langchain_experimental.text_splitter import SemanticChunker
+    from langchain_openai import OpenAIEmbeddings
+    HAS_SEMANTIC_CHUNKER = True
+except ImportError:
+    try:
+        # 如果不在experimental包中，尝试从text_splitters包导入
+        from langchain_text_splitters import SemanticChunker
+        from langchain_openai import OpenAIEmbeddings
+        HAS_SEMANTIC_CHUNKER = True
+    except ImportError:
+        # 记录一个占位函数，当选择semantic策略但不可用时使用
+        class UnavailableSemanticChunker:
+            def __init__(self, *args, **kwargs):
+                raise ImportError("SemanticChunker不可用。请安装langchain_experimental包。")
 
 import logging
 import copy
@@ -60,6 +74,16 @@ def get_text_splitter(strategy: ChunkingStrategy, chunk_size: int, chunk_overlap
             keep_separator=kwargs.get("keep_separator", True),
         )
     elif strategy == "semantic":
+        if not HAS_SEMANTIC_CHUNKER:
+            logging.warning("语义分块不可用，回退到递归分块策略。请安装langchain_experimental包以启用语义分块。")
+            # 回退到递归分块策略
+            return RecursiveCharacterTextSplitter(
+                chunk_size=chunk_size,
+                chunk_overlap=chunk_overlap,
+                separators=kwargs.get("separators", ["\n\n", "\n", ".", " ", ""]),
+                keep_separator=kwargs.get("keep_separator", True),
+            )
+            
         embeddings = kwargs.get("embeddings")
         if not embeddings:
             # 如果未指定嵌入模型，则提供默认值
@@ -69,12 +93,10 @@ def get_text_splitter(strategy: ChunkingStrategy, chunk_size: int, chunk_overlap
         breakpoint_threshold_type = kwargs.get("breakpoint_threshold_type", "percentile") # 或 "standard_deviation", "interquartile"
         breakpoint_threshold_amount = kwargs.get("breakpoint_threshold_amount", 0.95) # 值取决于类型
             
-        return SemanticChunker( # 此处使用langchain_experimental版本
+        return SemanticChunker(
             embeddings=embeddings,
             breakpoint_threshold_type=breakpoint_threshold_type,
             breakpoint_threshold_amount=breakpoint_threshold_amount,
-             # SemanticChunker不直接使用chunk_size/overlap，但我们为了一致性而传递
-             # 它基于语义相似性中断来确定分割。
         )
     elif strategy.startswith("code_"):
         language_map = {
@@ -126,12 +148,18 @@ def chunk_documents(
     except ValueError as e:
         logging.error(f"创建分割器失败: {e}")
         return [] # 或者根据所需行为重新引发异常
+    except ImportError as e:
+        logging.error(f"导入失败: {e}. 回退到递归分块。")
+        # 回退到递归分块
+        strategy = "recursive"
+        splitter = get_text_splitter(strategy, chunk_size, chunk_overlap, **splitter_kwargs)
 
     all_chunks = []
     for i, doc in enumerate(documents):
         original_metadata = copy.deepcopy(doc.metadata) # 避免修改原始doc元数据
         try:
-            if strategy == "semantic":
+            # 检查是否使用语义分块且是否可用
+            if strategy == "semantic" and HAS_SEMANTIC_CHUNKER:
                 # SemanticChunker有不同的接口，直接接收文本
                 chunks_data = splitter.create_documents([doc.page_content])
                 # 需要手动重新附加语义块的元数据

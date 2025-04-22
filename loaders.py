@@ -9,15 +9,15 @@ from langchain_community.document_loaders import (
     DirectoryLoader,
     CSVLoader,
     Docx2txtLoader,
-    WebBaseLoader
-)
-# 从单独的包导入Unstructured加载器
-from langchain_unstructured import (
-    UnstructuredLoader,
+    WebBaseLoader,
+    # 从langchain_community正确导入Unstructured相关类
     UnstructuredMarkdownLoader,
+    UnstructuredImageLoader,
     UnstructuredPowerPointLoader,
     UnstructuredEmailLoader
 )
+# 从langchain_unstructured正确导入UnstructuredLoader
+from langchain_unstructured import UnstructuredLoader
 import logging
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
@@ -25,12 +25,13 @@ logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(
 # 文件扩展名到默认加载器的映射
 DEFAULT_LOADERS: Dict[str, Type[BaseLoader]] = {
     ".txt": TextLoader,
-    ".pdf": PyPDFLoader, # 基本PDF加载器，对于复杂PDF考虑使用UnstructuredPDFLoader
+    ".pdf": PyPDFLoader, # 基本PDF加载器，对于复杂PDF考虑使用UnstructuredLoader
     ".md": UnstructuredMarkdownLoader,
     ".csv": CSVLoader,
     ".docx": Docx2txtLoader,
     ".pptx": UnstructuredPowerPointLoader,
     ".eml": UnstructuredEmailLoader,
+    ".py": TextLoader, # 使用TextLoader处理Python文件
     # 根据需要添加更多映射
 }
 
@@ -137,27 +138,45 @@ def load_directory(
     loader_kwargs = loader_kwargs or {}
 
     try:
-        loader = DirectoryLoader(
-            path=dir_path,
-            glob=glob_pattern,
-            loader_cls=loader_cls, # 传递None以让DirectoryLoader自动检测
-            loader_kwargs=loader_kwargs if loader_cls else None, # 只有在设置了loader_cls时才传递kwargs
-            recursive=recursive,
-            use_multithreading=use_multithreading,
-            show_progress=show_progress,
-            silent_errors=silent_errors, # 记录错误而不是引发异常
-        )
-        logging.info(f"加载目录'{dir_path}'，使用glob模式'{glob_pattern}'(recursive={recursive})")
-        documents = loader.load()
-        logging.info(f"从目录成功加载了{len(documents)}个文档。")
-        # DirectoryLoader通常会正确设置source，但还是检查一下
-        for doc in documents:
-            if 'source' not in doc.metadata or not doc.metadata['source']:
-                 # 如果丢失，尝试查找source（虽然DirectoryLoader应该处理这个）
-                 logging.warning(f"DirectoryLoader后文档缺少source元数据: {doc.page_content[:50]}...")
-                 # 如果DirectoryLoader失败，在这里无法可靠地确定source。
-
-        return documents
+        # 默认使用TextLoader作为回退，而不是让DirectoryLoader决定
+        # 这是因为它可能会尝试使用UnstructuredLoader，而这需要unstructured包
+        fallback_loader = loader_cls or TextLoader
+        
+        # 自定义加载器函数，手动检测文件类型并使用合适的加载器
+        def _load_file(filepath: str) -> List[Document]:
+            try:
+                return load_single_file(filepath, loader_kwargs=loader_kwargs)
+            except Exception as e:
+                if silent_errors:
+                    logging.warning(f"加载文件 {filepath} 时出错: {e}")
+                    return []
+                else:
+                    raise
+                    
+        # 手动查找文件并加载它们
+        all_docs = []
+        import glob
+        pattern = os.path.join(dir_path, glob_pattern)
+        files = glob.glob(pattern, recursive=recursive)
+        
+        # 显示进度信息
+        if show_progress:
+            logging.info(f"找到 {len(files)} 个文件...")
+            
+        # 处理文件
+        for file_path in files:
+            if os.path.isfile(file_path):
+                try:
+                    docs = load_single_file(file_path, loader_kwargs=loader_kwargs)
+                    all_docs.extend(docs)
+                except Exception as e:
+                    if silent_errors:
+                        logging.warning(f"加载文件 {file_path} 时出错: {e}")
+                    else:
+                        raise
+        
+        logging.info(f"从目录成功加载了{len(all_docs)}个文档。")
+        return all_docs
     except Exception as e:
         logging.error(f"加载目录{dir_path}时出错: {e}", exc_info=True)
         return []

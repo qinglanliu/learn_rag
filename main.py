@@ -7,7 +7,7 @@ from langchain_core.documents import Document
 # 导入自定义模块
 from loaders import load_single_file, load_directory
 from chunkers import chunk_documents
-from parsers import parse_file_to_elements, elements_to_langchain_docs, PDF_HI_RES_STRATEGY
+from parsers import parse_file_to_elements, elements_to_langchain_docs
 
 # 配置日志
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
@@ -120,7 +120,7 @@ if __name__ == "__main__":
     # 确保测试目录存在
     os.makedirs("temp_output", exist_ok=True)
     
-    # 测试场景1：加载单文件并分块
+    # 测试场景1：加载单文件并分块（使用递归分块策略）
     # 先创建一个测试文件
     os.makedirs("temp_load_data", exist_ok=True)
     with open("temp_load_data/large_text.txt", "w", encoding="utf-8") as f:
@@ -133,7 +133,7 @@ if __name__ == "__main__":
         input_path="temp_load_data/large_text.txt",
         output_path="temp_output/large_text_chunked.json",
         process_type="load_and_chunk",
-        chunk_strategy="recursive",
+        chunk_strategy="recursive", # 使用递归分块策略
         chunk_size=200,
         chunk_overlap=50
     )
@@ -158,7 +158,7 @@ if __name__ == "__main__":
             process_type="parse",
             additional_params={
                 "parser_params": {
-                    "strategy": PDF_HI_RES_STRATEGY,
+                    "strategy": "hi_res", # 使用高分辨率策略
                     "infer_table_structure": True,
                     "extract_images_in_pdf": True
                 }
@@ -166,10 +166,34 @@ if __name__ == "__main__":
         )
     else:
         print(f"示例PDF不存在: {pdf_path}。跳过场景3。")
+    
+    # 测试场景4：使用代码分块策略（如果处理代码文件时有用）
+    with open("temp_load_data/sample_code.py", "w", encoding="utf-8") as f:
+        f.write("""
+def hello_world():
+    print("Hello, world!")
+    
+class MyClass:
+    def __init__(self, name):
+        self.name = name
+    
+    def greet(self):
+        print(f"Hello, {self.name}!")
+""")
+        
+    process_and_save_to_json(
+        input_path="temp_load_data/sample_code.py",
+        output_path="temp_output/code_chunked.json",
+        process_type="load_and_chunk",
+        chunk_strategy="code_python",
+        chunk_size=50,
+        chunk_overlap=0
+    )
         
     print("\n所有处理完成。结果保存在 'temp_output' 目录。")
     print("你可以检查以下文件：")
-    print("1. temp_output/large_text_chunked.json - 单个文本文件加载并分块")
+    print("1. temp_output/large_text_chunked.json - 单个文本文件加载并递归分块")
     print("2. temp_output/directory_loaded.json - 从目录加载的文件")
     if os.path.exists(pdf_path):
-        print("3. temp_output/parsed_pdf.json - 直接解析的PDF文件") 
+        print("3. temp_output/parsed_pdf.json - 直接解析的PDF文件")
+    print("4. temp_output/code_chunked.json - 使用Python代码分块策略的Python代码文件") 

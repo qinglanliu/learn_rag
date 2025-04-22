@@ -1,8 +1,20 @@
 import os
 from typing import List, Dict, Any, Optional
 from langchain_core.documents import Document
-from unstructured.partition.auto import partition
-from unstructured.cleaners.core import clean_extra_whitespace
+
+# 检查unstructured是否可用
+HAS_UNSTRUCTURED = False
+try:
+    from unstructured.partition.auto import partition
+    from unstructured.cleaners.core import clean_extra_whitespace
+    HAS_UNSTRUCTURED = True
+except ImportError:
+    # 提供备用功能
+    def clean_extra_whitespace(text):
+        """unstructured不可用时的简单空白清理"""
+        import re
+        return re.sub(r'\s+', ' ', text).strip()
+
 # 用于潜在的HTML到Markdown转换
 try:
     import markdownify
@@ -19,6 +31,27 @@ logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(
 DEFAULT_STRATEGY = "auto" # 让unstructured根据文件类型和设置自动选择
 PDF_HI_RES_STRATEGY = "hi_res" # 适用于具有布局分析的复杂PDF
 OCR_ONLY_STRATEGY = "ocr_only" # 强制对基于图像的文档使用OCR
+
+def simple_text_parser(file_path: str) -> List[Dict[str, Any]]:
+    """
+    当unstructured不可用时的简单文本解析器
+    """
+    try:
+        with open(file_path, 'r', encoding='utf-8') as f:
+            content = f.read()
+        
+        # 返回单个文档
+        return [{
+            "page_content": content,
+            "metadata": {
+                "source": file_path,
+                "category": "Text",
+                "element_id": "text_0"
+            }
+        }]
+    except Exception as e:
+        logging.error(f"读取文件时出错 {file_path}: {e}")
+        return []
 
 def parse_file_to_elements(
     file_path: str,
@@ -44,6 +77,11 @@ def parse_file_to_elements(
     if not os.path.exists(file_path):
         logging.error(f"找不到要解析的文件: {file_path}")
         return []
+
+    # 检查unstructured是否可用
+    if not HAS_UNSTRUCTURED:
+        logging.warning("unstructured包不可用，使用简单文本解析器。请使用'pip install unstructured'安装完整功能。")
+        return simple_text_parser(file_path)
 
     logging.info(f"使用'{strategy}'策略解析文件'{file_path}'")
 
